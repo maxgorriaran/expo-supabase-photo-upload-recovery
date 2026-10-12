@@ -19,14 +19,18 @@ npm start
 
 Open it in Expo Go for SDK 57. Or run `npm run web` for the browser version. No account or backend is needed for demo mode.
 
-1. Expand **Test a failure** and choose **Lost upload response**.
-2. Tap **Use sample photo**, then **Save photo**.
-3. Notice **Save unconfirmed**, **1 image**, **0 ready records**.
-4. Reload the app. The same capture and pending state remain.
+1. Tap **Try interrupted save**. It loads an original sample photo and arms the lost-response scenario.
+2. Tap **Save photo**. The upload commits, but the demo discards its response.
+3. Notice **Save unconfirmed**. The receipt shows **On device: Kept**, with both cloud steps **Unconfirmed**. Account totals show **1 image** and **0 saved records**.
+4. Reload the app. The same capture ID and pending state remain.
 5. Tap **Retry save**. That one action resumes the injected requests and checks the same capture.
-6. The result is **Cloud confirmed**, with **1 image** and **1 ready record**.
+6. The screen shows **Recovered** and **Cloud confirmed**. Both cloud steps are **Verified**, with **1 image** and **1 saved record** in the account.
 
-Also try a rejected database write, lost database response, rejected upload, offline save, account A/B switching, and offline removal. **Details** contains the recovery trace, capture ID, account switch, and soft-removal action. **Photos** keeps older pending captures accessible. The sample artwork is original and synthetic; no product photos or private data are included.
+**Test scenario** also offers rejected database writes, lost database responses, rejected uploads, and offline saves. **Choose a photo** lets you use the sample, camera, or photo library; choose **Normal save** for the happy path. **Details** contains verification, the recovery trace, account switching, and soft removal. **Photos** keeps older pending captures accessible.
+
+The receipt describes the selected capture, while the separate account totals describe all visible objects and records. An uploaded image with a lost acknowledgement stays unconfirmed until recovery verifies it; another photo's cloud totals never turn this capture's steps green.
+
+The coastline sample is an original AI-generated image. No private product photos or customer data are included. The app keeps system typography, a compact photo preview, one main action per state, and optional developer controls.
 
 ## Connect a separate Supabase project
 

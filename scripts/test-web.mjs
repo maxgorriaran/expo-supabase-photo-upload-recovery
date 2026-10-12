@@ -37,7 +37,7 @@ async function opened(context) {
   const page = await context.newPage();
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(url);
-  await page.getByTestId('sample-photo').waitFor();
+  await page.getByTestId('toggle-failures').waitFor();
   return page;
 }
 async function choose(page, name) {
@@ -51,6 +51,10 @@ async function details(page) {
 async function switchAccount(page) {
   await details(page);
   await page.getByTestId('switch-account').click();
+}
+async function verify(page) {
+  await details(page);
+  await page.getByTestId('save-photo').click();
 }
 async function capture(page) {
   if (!(await page.getByTestId('sample-photo').count()))
@@ -91,7 +95,7 @@ async function scenario(name, viewport) {
   await number(page, 'object-count', 1);
   await number(page, 'row-count', 1);
   assert.equal(await activeId(page), id);
-  await page.getByTestId('save-photo').click();
+  await verify(page);
   await page.getByRole('button', { name: 'Verify again', exact: true }).waitFor();
   await number(page, 'object-count', 1);
   await number(page, 'row-count', 1);
@@ -128,9 +132,9 @@ try {
       page = await opened(context),
       video = page.video();
     await pause(1600);
-    await choose(page, 'upload-response-lost');
-    await pause(800);
-    const id = await capture(page);
+    await page.getByTestId('start-demo').click();
+    await status(page, 'Local only');
+    const id = await activeId(page);
     await pause(1800);
     await page.getByTestId('save-photo').click();
     await status(page, 'Save unconfirmed');
@@ -173,7 +177,7 @@ try {
       'docs/demo.gif',
     ]);
     assert.deepEqual(errors, []);
-    console.log('Recorded docs/demo.mp4, demo.gif, and demo-poster.png from the minimal UI.');
+    console.log('Recorded docs/demo.mp4, demo.gif, and demo-poster.png from the recovery flow.');
   } else {
     for (const name of [
       'normal',
@@ -193,11 +197,12 @@ try {
     await status(page, 'Cloud confirmed');
     await switchAccount(page);
     await page.getByTestId('no-capture').waitFor();
+    await details(page);
     await number(page, 'object-count', 0);
     await switchAccount(page);
     await status(page, 'Cloud confirmed');
     await choose(page, 'offline');
-    await page.getByTestId('save-photo').click();
+    await verify(page);
     await status(page, 'Verification unconfirmed');
     await page.getByTestId('save-photo').click();
     await status(page, 'Cloud confirmed');
@@ -226,6 +231,12 @@ try {
     await choose(multiple, 'normal');
     const second = await capture(multiple);
     assert.notEqual(first, second);
+    assert.match(
+      await multiple.getByTestId('receipt-image').innerText(),
+      /Not sent/,
+      'An older cloud object must not mark this new capture verified',
+    );
+    assert.match(await multiple.getByTestId('receipt-record').innerText(), /Not saved/);
     await multiple.getByTestId('toggle-photos').click();
     await multiple.getByTestId(`capture-${first}`).click();
     await status(multiple, 'Save unconfirmed');
@@ -239,6 +250,99 @@ try {
     await status(multiple, 'Cloud confirmed');
     await more.close();
     results.push('Older pending captures stay accessible after adding a photo and reloading');
+    const quick = await browser.newContext({ viewport: { width: 390, height: 844 } }),
+      quickPage = await opened(quick);
+    await quickPage.getByTestId('start-demo').click();
+    await status(quickPage, 'Local only');
+    const quickId = await activeId(quickPage);
+    await quickPage.getByTestId('save-photo').click();
+    await status(quickPage, 'Save unconfirmed');
+    await number(quickPage, 'object-count', 1);
+    await number(quickPage, 'row-count', 0);
+    assert.match(await quickPage.getByTestId('receipt-device').innerText(), /Kept/);
+    assert.match(
+      await quickPage.getByTestId('receipt-image').innerText(),
+      /Unconfirmed/,
+      'A lost acknowledgement must not be shown as a verified image',
+    );
+    assert.match(await quickPage.getByTestId('receipt-record').innerText(), /Unconfirmed/);
+    await quickPage.screenshot({
+      path: 'output/playwright/recovery-interrupted-390.png',
+      fullPage: true,
+    });
+    await quickPage.reload();
+    await status(quickPage, 'Save unconfirmed');
+    assert.equal(await activeId(quickPage), quickId);
+    assert.match(await quickPage.getByTestId('receipt-image').innerText(), /Unconfirmed/);
+    await quickPage.getByTestId('save-photo').click();
+    await status(quickPage, 'Cloud confirmed');
+    await number(quickPage, 'object-count', 1);
+    await number(quickPage, 'row-count', 1);
+    assert.equal(await activeId(quickPage), quickId);
+    assert.match(await quickPage.getByTestId('receipt-image').innerText(), /Verified/);
+    assert.match(await quickPage.getByTestId('receipt-record').innerText(), /Verified/);
+    assert.equal(
+      await quickPage.getByRole('button', { name: 'Add another photo', exact: true }).count(),
+      1,
+    );
+    assert.equal(
+      await quickPage.getByRole('button', { name: 'Verify again', exact: true }).count(),
+      0,
+    );
+    await quickPage.screenshot({
+      path: 'output/playwright/recovery-confirmed-390.png',
+      fullPage: true,
+    });
+    await quick.close();
+    results.push('Visible recovery demo, honest receipt states, reload, and completion action');
+    const missing = await browser.newContext({ viewport: { width: 320, height: 740 } }),
+      missingPage = await opened(missing);
+    const missingId = await capture(missingPage);
+    // Remove only this synthetic test capture to exercise actual IndexedDB loss.
+    await missingPage.evaluate(
+      (id) =>
+        new Promise((resolve, reject) => {
+          const request = indexedDB.open('photo-recovery-files', 1);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const db = request.result,
+              tx = db.transaction('files', 'readwrite');
+            tx.objectStore('files').delete(`local-photo://capture-${id}`);
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+            tx.onabort = () => {
+              db.close();
+              reject(tx.error);
+            };
+          };
+        }),
+      missingId,
+    );
+    await missingPage.reload();
+    await missingPage.getByText('Preview unavailable', { exact: true }).waitFor();
+    await missingPage
+      .getByRole('heading', { name: 'Local photo unavailable.', exact: true })
+      .waitFor();
+    assert.match(
+      await missingPage.getByTestId('receipt-device').innerText(),
+      /Unavailable/,
+      'The receipt must not claim a missing local file is kept',
+    );
+    await missingPage.getByTestId('save-photo').click();
+    await status(missingPage, 'Save unconfirmed');
+    await missingPage
+      .getByRole('heading', { name: 'Original unavailable.', exact: true })
+      .waitFor();
+    await number(missingPage, 'object-count', 0);
+    await number(missingPage, 'row-count', 0);
+    await missingPage.screenshot({
+      path: 'output/playwright/missing-original-320.png',
+      fullPage: true,
+    });
+    await missing.close();
+    results.push('Missing local JPEG is shown as unavailable and never confirmed or uploaded');
     assert.deepEqual(errors, [], 'No uncaught browser exceptions');
     await writeFile(
       'output/playwright/web-results.json',

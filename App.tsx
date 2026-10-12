@@ -111,7 +111,7 @@ function AppContent() {
     run(async (r, owner) => {
       let uri: string;
       if (source === 'sample') {
-        const asset = Asset.fromModule(require('./assets/sample.jpg'));
+        const asset = Asset.fromModule(require('./assets/sample-coast.jpg'));
         await asset.downloadAsync();
         uri = asset.localUri ?? asset.uri;
       } else {
