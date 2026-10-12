@@ -19,4 +19,4 @@ jobs:
       - run: npm run export:web
       - run: npx playwright install --with-deps chromium
       - run: npm run test:web
-      - run: npx expo export --platform ios --output-dir output/native
+      - run: npx expo export --platform ios --platform android --output-dir output/native

@@ -23,12 +23,21 @@ function AppContent() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [selectedId, setSelectedId] = useState<string>();
   const [traces, setTraces] = useState<Trace[]>([]);
-  const [counts, setCounts] = useState({ objects: 0, rows: 0, deleted: 0 });
+  const [counts, setCounts] = useState<Awaited<ReturnType<Runtime['counts']>> | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false),
     [, redraw] = useState(0);
+  const [activity, setActivity] = useState<'capture' | 'save' | 'remove'>();
   const operation = useRef(0);
-  const photo = photos.find((p) => p.id === selectedId) ?? photos[0];
+  const refreshVersion = useRef(0);
+  const photo =
+    photos.find((p) => p.id === selectedId) ??
+    photos.find(
+      (p) =>
+        p.state === 'pending' || !!p.lastError || (p.state === 'deleted' && !p.deleteConfirmed),
+    ) ??
+    photos.find((p) => p.state === 'local') ??
+    photos[0];
   useEffect(() => {
     let active = true,
       created: Runtime | undefined;
@@ -52,18 +61,30 @@ function AppContent() {
     };
   }, []);
   const refresh = async (r: Runtime) => {
-    const owner = r.owner();
-    try {
-      const [next, remote] = await Promise.all([r.recovery.list(), r.counts()]);
-      if (r.owner() === owner) {
-        setPhotos(next);
-        setCounts(remote);
-        redraw((n) => n + 1);
-      }
-    } catch {
-      if (r.owner() === owner)
-        setMessage('Could not read recovery state. Check storage access or the network.');
-    }
+    const owner = r.owner(),
+      version = ++refreshVersion.current;
+    const current = () => r.owner() === owner && refreshVersion.current === version;
+    await Promise.all([
+      (async () => {
+        try {
+          const next = await r.recovery.list();
+          if (current()) {
+            setPhotos(next);
+            redraw((n) => n + 1);
+          }
+        } catch {
+          if (current()) setMessage('Could not read photos on this device. Check storage access.');
+        }
+      })(),
+      (async () => {
+        try {
+          const remote = await r.counts();
+          if (current()) setCounts(remote);
+        } catch {
+          if (current()) setCounts(null);
+        }
+      })(),
+    ]);
   };
   useEffect(() => {
     if (!runtime) return;
@@ -73,25 +94,32 @@ function AppContent() {
         owner = runtime.owner();
         operation.current++;
         setPhotos([]);
+        setCounts(null);
         setSelectedId(undefined);
         setTraces([]);
         setMessage('');
         setBusy(false);
+        setActivity(undefined);
       }
       void refresh(runtime);
     });
     const stopFaults = runtime.faults.subscribe(() => redraw((n) => n + 1));
     void refresh(runtime);
     return () => {
+      refreshVersion.current++;
       stop();
       stopFaults();
     };
   }, [runtime]);
-  const run = async (work: (r: Runtime, owner: string) => Promise<void>) => {
+  const run = async (
+    work: (r: Runtime, owner: string) => Promise<void>,
+    kind: 'capture' | 'save' | 'remove',
+  ) => {
     if (!runtime || !runtime.owner()) return;
     const ticket = ++operation.current,
       owner = runtime.owner()!;
     setBusy(true);
+    setActivity(kind);
     setMessage('');
     try {
       await work(runtime, owner);
@@ -103,6 +131,7 @@ function AppContent() {
     } finally {
       if (operation.current === ticket) {
         setBusy(false);
+        setActivity(undefined);
         await refresh(runtime);
       }
     }
@@ -150,7 +179,7 @@ function AppContent() {
         rendered?.release();
         context.release();
       }
-    });
+    }, 'capture');
   return (
     <PhotoScreen
       runtime={runtime}
@@ -160,27 +189,31 @@ function AppContent() {
       counts={counts}
       traces={traces}
       busy={busy}
+      activity={activity}
       message={message}
       onCapture={(source) => void capture(source)}
-      onSave={() => {
-        if (photo)
-          void run(async (r) => {
-            if (r.faults.needsReconnect) r.faults.reconnect();
-            await r.recovery.save(photo.id);
-          });
+      onSave={(id) => {
+        setSelectedId(id);
+        void run(async (r) => {
+          if (r.faults.needsReconnect) r.faults.reconnect();
+          await r.recovery.save(id);
+        }, 'save');
       }}
-      onRemove={() => {
-        if (photo)
-          void run(async (r) => {
-            if (r.faults.needsReconnect) r.faults.reconnect();
-            await r.recovery.remove(photo.id);
-          });
+      onRemove={(id) => {
+        setSelectedId(id);
+        void run(async (r) => {
+          if (r.faults.needsReconnect) r.faults.reconnect();
+          await r.recovery.remove(id);
+        }, 'remove');
       }}
       onSelect={setSelectedId}
       onSwitch={() => {
         operation.current++;
+        refreshVersion.current++;
         setBusy(false);
+        setActivity(undefined);
         setPhotos([]);
+        setCounts(null);
         setTraces([]);
         setMessage('');
         void runtime

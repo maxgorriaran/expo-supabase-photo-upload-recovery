@@ -1,5 +1,7 @@
 # Expo + Supabase Photo Recovery
 
+[![Checks](https://github.com/maxgorriaran/expo-supabase-photo-recovery/actions/workflows/ci.yml/badge.svg)](https://github.com/maxgorriaran/expo-supabase-photo-recovery/actions/workflows/ci.yml)
+
 **Your upload succeeded. Your app thinks it failed. What happens when you tap Retry?**
 
 A runnable Expo starter for recovering photo saves when an upload, database write, or response fails. It keeps the original JPEG on the device, persists one capture ID, and checks Storage and the database before retrying.
@@ -7,6 +9,8 @@ A runnable Expo starter for recovering photo saves when an upload, database writ
 ![Lost response, reload, and recovery to one image and one ready record](docs/demo.gif)
 
 [Watch the failure-to-recovery demo](docs/demo.mp4). The recording uses the explicitly labelled simulated cloud. The same recovery controller also has a real Supabase adapter and tested database policies.
+
+Locally verified with 49 core/PostgreSQL tests, 15 browser scenarios, 9 real Supabase HTTP scenarios, and iOS/Android Simulator recovery against real local Supabase services. Physical phones and a hosted backend remain unverified; see the [verification receipt](docs/verification.md).
 
 ## Try it without credentials
 
@@ -19,18 +23,20 @@ npm start
 
 Open it in Expo Go for SDK 57. Or run `npm run web` for the browser version. No account or backend is needed for demo mode.
 
-1. Tap **Try interrupted save**. It loads an original sample photo and arms the lost-response scenario.
-2. Tap **Save photo**. The upload commits, but the demo discards its response.
-3. Notice **Save unconfirmed**. The receipt shows **On device: Kept**, with both cloud steps **Unconfirmed**. Account totals show **1 image** and **0 saved records**.
+1. Tap **Try recovery demo** in the empty outbox. It keeps a sample JPEG locally and arms the lost-response scenario.
+2. Tap **Save** beside the photo. The upload commits, but the demo discards its response.
+3. Notice **Needs retry** and **Save unconfirmed**. Open **Details**: the receipt shows **On device: Kept**, with both cloud steps **Unconfirmed**. Account totals show **1 image** and **0 saved records**.
 4. Reload the app. The same capture ID and pending state remain.
-5. Tap **Retry save**. That one action resumes the injected requests and checks the same capture.
-6. The screen shows **Recovered** and **Cloud confirmed**. Both cloud steps are **Verified**, with **1 image** and **1 saved record** in the account.
+5. Tap **Retry**. That one action resumes the injected requests and checks the same capture.
+6. The row shows **Saved**, with **Image and save record verified** below it. Details shows both cloud steps **Verified**, with **1 image** and **1 saved record** in the account.
 
-**Test scenario** also offers rejected database writes, lost database responses, rejected uploads, and offline saves. **Choose a photo** lets you use the sample, camera, or photo library; choose **Normal save** for the happy path. **Details** contains verification, the recovery trace, account switching, and soft removal. **Photos** keeps older pending captures accessible.
+**Add photo** opens the sample, camera, and photo-library choices. **Test controls** offers rejected database writes, lost database responses, rejected uploads, and offline saves; choose **Normal save** for the happy path. Tap a row or **Details** for its full preview, capture ID, verification receipt, recovery trace, account totals, and soft removal. Older captures remain visible in the outbox. On restart, unfinished saves take priority.
 
-The receipt describes the selected capture, while the separate account totals describe all visible objects and records. An uploaded image with a lost acknowledgement stays unconfirmed until recovery verifies it; another photo's cloud totals never turn this capture's steps green.
+The receipt describes the selected capture, while account totals describe all visible objects and records. An uploaded image with a lost acknowledgement stays unconfirmed until recovery verifies it. Another photo's cloud totals never mark this capture verified. Missing originals show **Unavailable**, rather than claiming the local copy is kept.
 
-The coastline sample is an original AI-generated image. No private product photos or customer data are included. The app keeps system typography, a compact photo preview, one main action per state, and optional developer controls.
+The interface uses system typography, compact photo rows, real timestamps and JPEG sizes, a contextual Save/Retry action, and optional inspection tools. During retry, mutations are disabled while Details stays readable. The layout was informed by familiar photo/file apps and [Expo's professional design guidance](https://expo.dev/blog/how-to-apply-professional-design-principles-in-ai-app-development).
+
+The coastline sample is an original AI-generated image. No private product photos or customer data are included.
 
 ## Connect a separate Supabase project
 
@@ -39,7 +45,7 @@ Use a new project for this starter. Do not run its migration against an existing
 1. Apply [`supabase/migrations/20261011204618_photo_recovery.sql`](supabase/migrations/20261011204618_photo_recovery.sql) through your normal migration workflow or the new project's SQL editor.
 2. Enable **Anonymous Sign-Ins** in Supabase Auth. Anonymous users still have an authenticated user ID; ownership policies use that ID.
 3. Copy `.env.example` to `.env`. Set the project URL and its **publishable key**. A legacy anon key also works. Never put a service role or secret key in this app.
-4. Restart Expo. The header should show **Connected · Supabase**.
+4. Restart Expo. The header should show **Supabase**. This names the configured backend; it does not assert that the phone is currently online. Local captures load independently of cloud totals, and unavailable totals are labelled in Details.
 
 ```dotenv
 EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co

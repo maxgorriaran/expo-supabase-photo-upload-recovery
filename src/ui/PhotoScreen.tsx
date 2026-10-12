@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
+  FlatList,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -12,6 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { previewPhoto, releasePreview } from '../adapters/files';
 import { SCENARIOS } from '../adapters/faults';
 import { DEMO_A } from '../adapters/demo';
@@ -19,44 +22,69 @@ import type { Photo, Trace } from '../core/types';
 import type { Runtime } from '../runtime';
 
 const c = {
-  ink: '#182e27',
-  muted: '#5f7067',
-  paper: '#f7f9f6',
+  ink: '#171719',
+  muted: '#717178',
+  section: '#57575e',
+  line: '#e1e1e6',
+  fill: '#f3f3f5',
   white: '#ffffff',
-  line: '#dce4dd',
-  green: '#245c47',
-  greenWash: '#e6f0e8',
-  warning: '#89451f',
-  warningWash: '#f8eee2',
+  blue: '#006be6',
+  warning: '#956514',
+  danger: '#b1362f',
 };
 type Props = {
   runtime: Runtime | undefined;
   initialError: string;
   photo: Photo | undefined;
   photos: Photo[];
-  counts: { objects: number; rows: number; deleted: number };
+  counts: { objects: number; rows: number; deleted: number } | null;
   traces: Trace[];
   busy: boolean;
+  activity: 'capture' | 'save' | 'remove' | undefined;
   message: string;
   onCapture: (source: 'sample' | 'library' | 'camera') => void;
-  onSave: () => void;
-  onRemove: () => void;
+  onSave: (id: string) => void;
+  onRemove: (id: string) => void;
   onSwitch: () => void;
   onSelect: (id: string) => void;
 };
+type LocalRead = { owner: string; localUri: string; available: boolean };
+
+function Icon({
+  name,
+  size = 20,
+  color = c.muted,
+}: {
+  name: IoniconsIconName;
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Ionicons
+      name={name}
+      size={size}
+      color={color}
+      accessible={false}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      aria-hidden
+      allowFontScaling={false}
+    />
+  );
+}
 function FocusPressable({
   style,
   onFocus,
   onBlur,
-  focusColor = c.green,
   ...props
-}: React.ComponentProps<typeof Pressable> & { focusColor?: string }) {
+}: React.ComponentProps<typeof Pressable>) {
   const [focused, setFocused] = useState(false);
   return (
     <Pressable
       {...props}
       onFocus={(event) => {
-        setFocused(true);
+        const target = event.target as unknown as { matches?: (selector: string) => boolean };
+        setFocused(Platform.OS !== 'web' || target.matches?.(':focus-visible') === true);
         onFocus?.(event);
       }}
       onBlur={(event) => {
@@ -65,107 +93,93 @@ function FocusPressable({
       }}
       style={(state) => [
         typeof style === 'function' ? style(state) : style,
-        focused && { borderColor: focusColor },
+        focused && { borderColor: c.blue },
       ]}
     />
   );
 }
-function Button({
+function TextButton({
+  label,
+  testID,
+  onPress,
+  disabled = false,
+  icon,
+  danger = false,
+  compact = false,
+}: {
+  label: string;
+  testID?: string;
+  onPress: () => void;
+  disabled?: boolean;
+  icon?: IoniconsIconName;
+  danger?: boolean;
+  compact?: boolean;
+}) {
+  const color = disabled ? c.muted : danger ? c.danger : c.blue;
+  return (
+    <FocusPressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      testID={testID}
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [s.textButton, pressed && s.pressed]}
+    >
+      {icon && <Icon name={icon} size={23} color={color} />}
+      <Text style={[s.actionText, compact && s.compactAction, { color }]}>{label}</Text>
+    </FocusPressable>
+  );
+}
+function SaveButton({
   label,
   onPress,
+  disabled,
+  removal = false,
   testID,
-  disabled = false,
-  primary = false,
-  danger = false,
 }: {
   label: string;
   onPress: () => void;
+  disabled: boolean;
+  removal?: boolean;
   testID?: string;
-  disabled?: boolean;
-  primary?: boolean;
-  danger?: boolean;
 }) {
   return (
     <FocusPressable
-      focusColor={primary ? c.white : c.green}
+      testID={testID ?? (removal ? 'remove-photo' : 'save-photo')}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
       disabled={disabled}
-      testID={testID}
       onPress={onPress}
-      style={({ pressed }) => [
-        s.button,
-        primary && s.primary,
-        pressed && { opacity: 0.8 },
-        disabled && { opacity: 0.5 },
-      ]}
+      style={({ pressed }) => [s.saveTarget, pressed && s.pressed]}
     >
-      <Text style={[s.buttonText, primary && { color: c.white }, danger && { color: c.warning }]}>
-        {label}
-      </Text>
-    </FocusPressable>
-  );
-}
-function Disclosure({
-  label,
-  open,
-  onPress,
-  testID,
-  disabled = false,
-  value,
-}: {
-  label: string;
-  open: boolean;
-  onPress: () => void;
-  testID: string;
-  disabled?: boolean;
-  value?: string;
-}) {
-  return (
-    <FocusPressable
-      accessibilityRole="button"
-      accessibilityLabel={value ? `${label}: ${value}` : label}
-      accessibilityState={{ expanded: open, disabled }}
-      testID={testID}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        s.disclosure,
-        pressed && { opacity: 0.7 },
-        disabled && { opacity: 0.5 },
-      ]}
-    >
-      <View style={s.disclosureLabel}>
-        <Text style={s.disclosureText}>{label}</Text>
-        {value && (
-          <Text testID="scenario-hint" style={s.small}>
-            {value}
-          </Text>
-        )}
+      <View style={[s.saveButton, disabled && { backgroundColor: '#9f9fa4' }]}>
+        <Text style={s.saveText}>{label}</Text>
       </View>
-      <Text accessible={false} style={s.chevron}>
-        {open ? '−' : '+'}
-      </Text>
     </FocusPressable>
   );
 }
-type PreviewRead = { localUri: string; available: boolean };
-function Preview({
+
+// Every thumbnail reads and decodes the original. Journal presence alone cannot prove it is kept.
+function PhotoImage({
   photo,
   onRead,
+  expanded = false,
 }: {
-  photo: Photo | undefined;
-  onRead: (read: PreviewRead) => void;
+  photo: Photo;
+  onRead: (read: Omit<LocalRead, 'owner'>) => void;
+  expanded?: boolean;
 }) {
-  const [uri, setUri] = useState<string>(),
-    [failed, setFailed] = useState(false);
+  const [uri, setUri] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  const removed = photo.state === 'deleted';
   useEffect(() => {
     let active = true,
       loaded: string | undefined;
     setUri(undefined);
     setFailed(false);
-    if (photo && photo.state !== 'deleted')
+    if (!removed)
       previewPhoto(photo.localUri)
         .then((next) => {
           loaded = next;
@@ -182,31 +196,15 @@ function Preview({
       active = false;
       if (loaded) releasePreview(loaded);
     };
-  }, [photo?.localUri, photo?.state === 'deleted', onRead]);
-  const removed = photo?.state === 'deleted';
+  }, [photo.localUri, removed, onRead]);
   return (
-    <View style={s.preview} testID="active-photo" nativeID={photo?.id}>
-      {!photo ? (
-        <>
-          <Image
-            accessibilityLabel="AI-generated sample coastline"
-            source={require('../../assets/sample-coast.jpg')}
-            resizeMode="cover"
-            style={s.image}
-          />
-          <View style={s.sampleCaption}>
-            <Text testID="no-capture" style={s.sampleCaptionText}>
-              Sample photo · AI generated
-            </Text>
-          </View>
-        </>
-      ) : uri && !failed ? (
+    <View style={expanded ? s.expandedImage : s.thumbnail}>
+      {uri && !failed && !removed ? (
         <Image
-          key={photo.id}
-          accessibilityLabel="Photo preview"
           source={{ uri }}
-          resizeMode="cover"
           style={s.image}
+          resizeMode={expanded ? 'contain' : 'cover'}
+          accessibilityLabel={expanded ? 'Photo preview' : 'Photo thumbnail'}
           onLoad={() => onRead({ localUri: photo.localUri, available: true })}
           onError={() => {
             setFailed(true);
@@ -214,81 +212,134 @@ function Preview({
           }}
         />
       ) : !removed && !failed ? (
-        <ActivityIndicator color={c.green} accessibilityLabel="Loading photo preview" />
+        <ActivityIndicator color={c.muted} size="small" accessibilityLabel="Loading photo" />
       ) : (
-        <View style={s.empty}>
-          <Text style={s.emptyTitle}>{removed ? 'Photo removed' : 'Preview unavailable'}</Text>
-          <Text style={s.copy}>
-            {removed
-              ? 'A retry cannot restore this capture.'
-              : 'The local image could not be read.'}
-          </Text>
+        <View style={s.imageUnavailable}>
+          <Icon name={removed ? 'trash-outline' : 'image-outline'} size={expanded ? 28 : 23} />
+          {expanded && (
+            <Text style={s.copy}>{removed ? 'Photo removed' : 'Preview unavailable'}</Text>
+          )}
         </View>
       )}
     </View>
   );
 }
-function AccountTotals({ counts }: { counts: Props['counts'] }) {
+const statusOf = (p: Photo) =>
+  p.state === 'confirmed'
+    ? p.lastError
+      ? 'Verification unconfirmed'
+      : 'Saved'
+    : p.state === 'pending'
+      ? 'Save unconfirmed'
+      : p.state === 'deleted'
+        ? p.deleteConfirmed
+          ? 'Removal confirmed'
+          : 'Removed locally'
+        : 'Ready to save';
+function metadata(p: Photo, primary: boolean) {
+  const date = new Date(p.createdAt),
+    today = new Date(),
+    yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  const day =
+    date.toDateString() === today.toDateString()
+      ? primary
+        ? ''
+        : 'Today, '
+      : date.toDateString() === yesterday.toDateString()
+        ? 'Yesterday, '
+        : `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, `;
+  const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${day}${time} · ${Math.ceil(p.byteLength / 1024)} KB`;
+}
+function Status({
+  photo,
+  working = false,
+  primary = false,
+  removal = false,
+}: {
+  photo: Photo;
+  working?: boolean;
+  primary?: boolean;
+  removal?: boolean;
+}) {
+  const uncertain =
+    photo.state === 'pending' ||
+    !!photo.lastError ||
+    (photo.state === 'deleted' && !photo.deleteConfirmed);
+  const done =
+    (photo.state === 'confirmed' && !photo.lastError) ||
+    (photo.state === 'deleted' && photo.deleteConfirmed);
   return (
-    <View testID="cloud-summary" style={s.totals}>
-      <Text style={s.small}>Account totals</Text>
-      <Text style={s.totalsValue}>
-        <Text testID="object-count">{counts.objects}</Text>{' '}
-        {counts.objects === 1 ? 'image' : 'images'} · <Text testID="row-count">{counts.rows}</Text>{' '}
-        saved {counts.rows === 1 ? 'record' : 'records'}
+    <View style={s.statusLine} accessibilityLiveRegion={primary ? 'polite' : undefined}>
+      {working ? (
+        <ActivityIndicator color={c.muted} size="small" />
+      ) : uncertain ? (
+        <Icon name="alert-circle" size={19} color={c.warning} />
+      ) : done ? (
+        <Icon name="checkmark-circle" size={19} />
+      ) : null}
+      <Text
+        testID={primary ? 'photo-status' : undefined}
+        style={[s.status, uncertain && !working && { color: c.warning }]}
+      >
+        {working ? (removal ? 'Checking removal…' : 'Checking cloud…') : statusOf(photo)}
       </Text>
     </View>
   );
 }
-function ReceiptStep({
-  number,
+function AccountTotals({ counts }: { counts: Props['counts'] }) {
+  if (!counts)
+    return (
+      <View testID="cloud-summary" style={s.inspectorBlock}>
+        <Text style={s.inspectorLabel}>Account totals</Text>
+        <Text testID="cloud-counts-unavailable" style={s.small}>
+          Cloud totals unavailable. Retry checks this capture.
+        </Text>
+      </View>
+    );
+  return (
+    <View testID="cloud-summary" style={s.inspectorBlock}>
+      <Text style={s.inspectorLabel}>Account totals</Text>
+      <Text style={s.copy}>
+        <Text testID="object-count">{counts.objects}</Text>{' '}
+        {counts.objects === 1 ? 'image' : 'images'} · <Text testID="row-count">{counts.rows}</Text>{' '}
+        saved {counts.rows === 1 ? 'record' : 'records'}
+      </Text>
+      <Text style={s.small}>
+        <Text testID="deleted-count">{counts.deleted}</Text> deletion{' '}
+        {counts.deleted === 1 ? 'record' : 'records'}
+      </Text>
+    </View>
+  );
+}
+function ReceiptRow({
   label,
   value,
-  tone = 'idle',
+  known,
+  working,
   testID,
-  largeText,
 }: {
-  number: string;
   label: string;
   value: string;
-  tone?: 'idle' | 'done' | 'uncertain' | 'working';
+  known: boolean;
+  working?: boolean;
   testID: string;
-  largeText: boolean;
 }) {
-  const color = tone === 'done' ? c.green : tone === 'uncertain' ? c.warning : c.muted;
   return (
-    <View
-      style={[s.receiptStep, largeText && s.receiptStepLarge]}
-      accessible
-      accessibilityLabel={`${label}: ${value}`}
-      testID={testID}
-    >
-      <View
-        style={[s.stepMark, tone === 'done' && s.stepDone, tone === 'uncertain' && s.stepUncertain]}
-      >
-        {tone === 'working' ? (
-          <ActivityIndicator color={color} size="small" />
-        ) : (
-          <Text accessible={false} allowFontScaling={false} style={[s.stepNumber, { color }]}>
-            {number}
-          </Text>
-        )}
-      </View>
-      <View style={[s.stepCopy, largeText && { flex: 1 }]}>
-        <Text style={s.stepLabel}>{label}</Text>
-        <Text style={[s.stepValue, { color }]}>{value}</Text>
+    <View testID={testID} style={s.receiptRow} accessible accessibilityLabel={`${label}: ${value}`}>
+      {working ? (
+        <ActivityIndicator size="small" color={c.muted} />
+      ) : (
+        <Icon name={known ? 'checkmark-circle' : 'ellipse-outline'} />
+      )}
+      <View style={s.receiptCopy}>
+        <Text style={s.copy}>{label}</Text>
+        <Text style={s.small}>{value}</Text>
       </View>
     </View>
   );
 }
-const stateLabel = (p: Photo) =>
-  p.state === 'confirmed'
-    ? 'Saved'
-    : p.state === 'pending'
-      ? 'Pending'
-      : p.state === 'deleted'
-        ? 'Removed'
-        : 'Local';
 
 export function PhotoScreen({
   runtime,
@@ -298,6 +349,7 @@ export function PhotoScreen({
   counts,
   traces,
   busy,
+  activity,
   message,
   onCapture,
   onSave,
@@ -305,108 +357,61 @@ export function PhotoScreen({
   onSwitch,
   onSelect,
 }: Props) {
-  const [testing, setTesting] = useState(false),
-    [details, setDetails] = useState(false),
-    [sources, setSources] = useState(false),
-    [allPhotos, setAllPhotos] = useState(false);
-  const interrupted = useRef(new Set<string>());
-  const largeText = useWindowDimensions().fontScale >= 1.4;
-  const scroll = useRef<ScrollView>(null);
-  const [previewRead, setPreviewRead] = useState<PreviewRead>();
-  const owner = runtime?.owner();
+  const [sheet, setSheet] = useState<'sources' | 'details' | 'tests'>();
+  const [reads, setReads] = useState<Record<string, boolean>>({});
+  const owner = runtime?.owner() ?? '';
+  const currentOwner = useRef(owner);
+  currentOwner.current = owner;
+  const list = useRef<FlatList<Photo>>(null);
+  const { width, fontScale } = useWindowDimensions();
+  const stacked = width < 350 || fontScale >= 1.4;
+  // Ignore late image callbacks from another account; release each object URL in PhotoImage.
+  const onRead = useCallback(
+    (read: Omit<LocalRead, 'owner'>) => {
+      if (currentOwner.current !== owner) return;
+      setReads((old) =>
+        old[read.localUri] === read.available ? old : { ...old, [read.localUri]: read.available },
+      );
+    },
+    [owner],
+  );
   useEffect(() => {
-    setTesting(false);
-    setDetails(false);
-    setSources(false);
-    setAllPhotos(false);
-    interrupted.current.clear();
+    setSheet(undefined);
+    setReads({});
+    list.current?.scrollToOffset({ offset: 0, animated: false });
   }, [owner]);
-  useEffect(() => {
-    setSources(false);
-    scroll.current?.scrollTo({ y: 0, animated: false });
-  }, [owner, photo?.id]);
-  useEffect(() => {
-    if (photo?.state === 'pending' && photo.lastError) interrupted.current.add(photo.id);
-  }, [photo?.id, photo?.state, photo?.lastError]);
-  const state = photo?.state;
-  const uncertain = state === 'pending' || !!photo?.lastError;
-  const saved = state === 'confirmed' && !photo?.lastError;
-  const status =
-    state === 'confirmed'
-      ? photo?.lastError
-        ? 'Verification unconfirmed'
-        : 'Cloud confirmed'
-      : state === 'pending'
-        ? 'Save unconfirmed'
-        : state === 'deleted'
-          ? photo?.deleteConfirmed
-            ? 'Removal confirmed'
-            : 'Removed locally'
-          : 'Local only';
+  const status = photo ? statusOf(photo) : '';
   useEffect(() => {
     if (Platform.OS === 'ios' && photo) AccessibilityInfo.announceForAccessibility(status);
   }, [photo?.id, status]);
-  const missingOriginal = !!photo?.lastError?.startsWith('The original JPEG');
-  const localUnavailable =
-    missingOriginal ||
-    (previewRead?.localUri === photo?.localUri && previewRead?.available === false);
-  const localReadable =
-    previewRead?.localUri === photo?.localUri && previewRead?.available === true;
-  const title = !photo
-    ? 'Keep the photo.\nRecover the save.'
-    : missingOriginal
-      ? 'Original unavailable.'
-      : state === 'local' && localUnavailable
-        ? 'Local photo unavailable.'
-        : state === 'confirmed'
-          ? photo.lastError
-            ? 'Check interrupted.'
-            : interrupted.current.has(photo.id)
-              ? 'Recovered.'
-              : 'Photo saved.'
-          : state === 'pending'
-            ? 'Interrupted.\nReady to recover.'
-            : state === 'deleted'
-              ? 'Photo removed.'
-              : 'Ready to save.';
-  const help = !photo
-    ? 'Try an interrupted save, then recover the same photo.'
-    : missingOriginal
-      ? 'The original file could not be read. No replacement was uploaded.'
-      : state === 'local' && localUnavailable
-        ? 'The preview cannot be read. Save checks the cloud before attempting an upload.'
-        : state === 'confirmed'
-          ? photo.lastError
-            ? 'Previously saved. Retry verifies it again without recreating it.'
-            : 'Same capture. Image and save record verified.'
-          : state === 'pending'
-            ? 'Retry checks what reached the cloud, then finishes this capture.'
-            : state === 'deleted'
-              ? 'This is soft removal. Image files are retained.'
-              : 'Your JPEG is on this device. The cloud save comes next.';
   const latest = new Map<string, Trace>();
   traces.filter((t) => t.photoId === photo?.id).forEach((t) => latest.set(t.stage, t));
-  // Only this capture's verified stages can turn a receipt step green. Account totals cannot.
+  const saved = photo?.state === 'confirmed' && !photo.lastError;
+  const working = busy && activity !== 'capture';
   const imageKnown = saved || latest.get('Verify readable image')?.outcome === 'ok';
   const recordKnown = saved || latest.get('Save database record')?.outcome === 'ok';
   const currentTrace = traces.filter((t) => t.photoId === photo?.id).at(-1);
   const imageWorking =
-    busy &&
+    working &&
     currentTrace?.outcome === 'working' &&
     ['Check stored image', 'Upload image', 'Verify readable image'].includes(currentTrace.stage);
-  const recordWorking = busy && latest.get('Save database record')?.outcome === 'working';
+  const recordWorking = working && latest.get('Save database record')?.outcome === 'working';
+  const missing =
+    !!photo &&
+    (reads[photo.localUri] === false || !!photo.lastError?.startsWith('The original JPEG'));
+  const localReadable = !!photo && reads[photo.localUri] === true && !missing;
   const scenario = SCENARIOS.find((item) => item.id === runtime?.faults.scenario);
   if (!runtime)
     return (
       <SafeAreaView style={[s.root, s.loading]}>
         {initialError ? (
           <>
-            <Text style={s.loadingTitle}>Could not open recovery</Text>
+            <Text style={s.sectionTitle}>Could not open recovery</Text>
             <Text style={s.error}>{initialError}</Text>
           </>
         ) : (
           <>
-            <ActivityIndicator color={c.green} />
+            <ActivityIndicator color={c.muted} />
             <Text style={s.copy}>Opening recovery storage…</Text>
           </>
         )}
@@ -417,552 +422,678 @@ export function PhotoScreen({
       ? owner === DEMO_A
         ? 'Account A'
         : 'Account B'
-      : `Account ${owner?.slice(0, 6) ?? '—'}`;
-  const photoSources = sources && (
-    <View style={s.sources}>
-      <Button
-        testID="sample-photo"
-        label="Use sample photo"
+      : `Account ${owner.slice(0, 6)}`;
+  const titleOf = (p: Photo) =>
+    `Photo ${photos.length - photos.findIndex((item) => item.id === p.id)}`;
+  const groupTitle = !photo
+    ? ''
+    : working
+      ? activity === 'remove'
+        ? 'Removing'
+        : 'Recovering'
+      : photo.state === 'pending' || (photo.state === 'confirmed' && photo.lastError)
+        ? 'Needs retry'
+        : photo.state === 'local'
+          ? 'Ready to save'
+          : photo.state === 'deleted'
+            ? photo.deleteConfirmed
+              ? 'Removed capture'
+              : 'Needs removal'
+            : 'Latest capture';
+  const help = !photo
+    ? ''
+    : photo.state === 'deleted'
+      ? 'Soft removal. Image files are retained.'
+      : saved
+        ? 'Image and save record verified.'
+        : missing
+          ? 'Local original unavailable. Check Details.'
+          : !localReadable
+            ? 'Checking the local copy…'
+            : working
+              ? 'Local copy kept. Checking this capture.'
+              : photo.state === 'pending' || photo.lastError
+                ? 'Local copy kept. Retry checks the cloud.'
+                : 'Local copy kept. Ready when you are.';
+  const openPhoto = (p: Photo) => {
+    onSelect(p.id);
+    setSheet('details');
+  };
+  const capture = (source: 'sample' | 'library' | 'camera') => {
+    setSheet(undefined);
+    onCapture(source);
+  };
+  const saveAction = (p: Photo, detail = false) => {
+    if (p.state === 'deleted')
+      return (
+        !p.deleteConfirmed && (
+          <SaveButton
+            label={working ? 'Retrying' : 'Retry removal'}
+            disabled={busy}
+            removal
+            testID={detail ? 'details-remove-photo' : undefined}
+            onPress={() => onRemove(p.id)}
+          />
+        )
+      );
+    if (p.state === 'confirmed' && !p.lastError) return null;
+    return (
+      <SaveButton
+        testID={detail ? 'details-save-photo' : undefined}
+        label={working ? 'Retrying' : p.state === 'local' ? 'Save' : 'Retry'}
         disabled={busy}
-        onPress={() => onCapture('sample')}
+        onPress={() => onSave(p.id)}
       />
-      <View style={s.sourceRow}>
-        <Button label="Photo library" disabled={busy} onPress={() => onCapture('library')} />
-        <Button label="Camera" disabled={busy} onPress={() => onCapture('camera')} />
+    );
+  };
+  const row = (p: Photo, primary: boolean) => {
+    const hasAction =
+      primary &&
+      !(p.state === 'confirmed' && !p.lastError) &&
+      !(p.state === 'deleted' && p.deleteConfirmed);
+    return (
+      <View
+        testID={primary ? 'active-photo' : undefined}
+        nativeID={primary ? p.id : undefined}
+        style={[s.photoRow, primary && stacked && s.stackedRow]}
+      >
+        <FocusPressable
+          testID={`capture-${p.id}`}
+          accessibilityRole="button"
+          accessibilityLabel={`${titleOf(p)}, ${statusOf(p)}. View photo and save details.`}
+          accessibilityState={{ disabled: busy && !primary }}
+          disabled={busy && !primary}
+          onPress={() => openPhoto(p)}
+          style={({ pressed }) => [s.rowOpen, pressed && s.pressed]}
+        >
+          <PhotoImage photo={p} onRead={onRead} />
+          <View style={s.rowCopy}>
+            <Text style={s.photoTitle}>{titleOf(p)}</Text>
+            <Text style={s.metadata}>{metadata(p, primary)}</Text>
+            <Status
+              photo={p}
+              working={primary && working}
+              primary={primary}
+              removal={activity === 'remove'}
+            />
+          </View>
+          {!hasAction && (
+            <Icon name="chevron-forward" size={21} color={busy ? '#c2c2c8' : '#9999a1'} />
+          )}
+        </FocusPressable>
+        {hasAction && saveAction(p)}
       </View>
-    </View>
-  );
+    );
+  };
+  const others = photos.filter((p) => p.id !== photo?.id);
   return (
     <SafeAreaView style={s.root}>
-      <ScrollView ref={scroll} contentContainerStyle={s.page}>
-        <View style={s.header}>
-          <Text maxFontSizeMultiplier={1.6} style={s.brand}>
-            Photo recovery
-          </Text>
-          <Text style={s.mode}>
-            {runtime.mode === 'demo' ? 'Demo · simulated cloud' : 'Connected · Supabase'}
-          </Text>
-        </View>
-        <View style={s.story} accessibilityLiveRegion="polite">
-          <Text
-            testID={photo ? 'photo-status' : undefined}
-            maxFontSizeMultiplier={1.8}
-            style={[s.eyebrow, { color: uncertain ? c.warning : c.green }]}
-          >
-            {photo ? status : 'Expo + Supabase starter'}
-          </Text>
-          <Text
-            accessibilityRole="header"
-            maxFontSizeMultiplier={1.6}
-            style={[s.title, saved && { color: c.green }]}
-          >
-            {title}
-          </Text>
-          <Text style={s.help}>{help}</Text>
-        </View>
-        <Preview photo={photo} onRead={setPreviewRead} />
-        {state !== 'deleted' && (
-          <View style={s.receipt} testID="save-receipt">
-            <View style={s.receiptHeading}>
-              <Text style={s.receiptTitle}>{photo ? 'This capture' : 'The recovery flow'}</Text>
-              {photo && (
-                <Text
-                  testID="capture-id"
-                  accessibilityLabel={`Capture ID ${photo.id}`}
-                  style={s.captureId}
-                >
-                  {photo.id.slice(0, 8)}
-                </Text>
-              )}
-            </View>
-            <View style={[s.receiptSteps, largeText && s.receiptStepsLarge]}>
-              <ReceiptStep
-                number="01"
-                label="On device"
-                value={
-                  !photo
-                    ? 'Capture first'
-                    : localUnavailable
-                      ? 'Unavailable'
-                      : localReadable
-                        ? 'Kept'
-                        : 'Loading…'
-                }
-                tone={
-                  !photo
-                    ? 'idle'
-                    : localUnavailable
-                      ? 'uncertain'
-                      : localReadable
-                        ? 'done'
-                        : 'working'
-                }
-                testID="receipt-device"
-                largeText={largeText}
-              />
-              <ReceiptStep
-                number="02"
-                label="Cloud image"
-                value={
-                  photo?.lastError && state === 'confirmed'
-                    ? 'Recheck needed'
-                    : imageWorking
-                      ? 'Checking…'
-                      : imageKnown
-                        ? 'Verified'
-                        : state === 'pending'
-                          ? 'Unconfirmed'
-                          : 'Not sent'
-                }
-                tone={
-                  photo?.lastError && state === 'confirmed'
-                    ? 'uncertain'
-                    : imageWorking
-                      ? 'working'
-                      : imageKnown
-                        ? 'done'
-                        : state === 'pending'
-                          ? 'uncertain'
-                          : 'idle'
-                }
-                testID="receipt-image"
-                largeText={largeText}
-              />
-              <ReceiptStep
-                number="03"
-                label="Save record"
-                value={
-                  photo?.lastError && state === 'confirmed'
-                    ? 'Recheck needed'
-                    : recordWorking
-                      ? 'Checking…'
-                      : recordKnown
-                        ? 'Verified'
-                        : state === 'pending'
-                          ? 'Unconfirmed'
-                          : 'Not saved'
-                }
-                tone={
-                  photo?.lastError && state === 'confirmed'
-                    ? 'uncertain'
-                    : recordWorking
-                      ? 'working'
-                      : recordKnown
-                        ? 'done'
-                        : state === 'pending'
-                          ? 'uncertain'
-                          : 'idle'
-                }
-                testID="receipt-record"
-                largeText={largeText}
-              />
-            </View>
-            {photo && <AccountTotals counts={counts} />}
-          </View>
-        )}
-        {!!message && !message.startsWith('Cloud save is unconfirmed') && (
-          <Text testID="operation-message" accessibilityLiveRegion="polite" style={s.error}>
-            {message}
-          </Text>
-        )}
-        <View style={s.mainAction}>
-          {!photo ? (
-            <Button
-              primary
-              testID="start-demo"
-              label={
-                busy
-                  ? 'Preparing photo…'
-                  : scenario?.id === 'normal' || scenario?.id === 'upload-response-lost'
-                    ? 'Try interrupted save'
-                    : 'Try this failure'
-              }
-              disabled={busy}
-              onPress={() => {
-                runtime.faults.select(
-                  runtime.faults.scenario === 'normal'
-                    ? 'upload-response-lost'
-                    : runtime.faults.scenario,
-                );
-                onCapture('sample');
-              }}
-            />
-          ) : saved ? (
-            <Button
-              primary
-              testID="new-photo"
-              label="Add another photo"
-              disabled={busy}
-              onPress={() => setSources(!sources)}
-            />
-          ) : state === 'deleted' ? (
-            photo.deleteConfirmed ? (
-              <Button
-                primary
-                testID="new-photo"
-                label="Add another photo"
-                disabled={busy}
-                onPress={() => setSources(!sources)}
-              />
-            ) : (
-              <Button
-                primary
-                testID="remove-photo"
-                label={busy ? 'Checking removal…' : 'Retry cloud removal'}
-                disabled={busy}
-                onPress={onRemove}
-              />
-            )
-          ) : (
-            <Button
-              primary
-              testID="save-photo"
-              label={
-                busy
-                  ? 'Checking this capture…'
-                  : state === 'pending'
-                    ? 'Retry save'
-                    : state === 'confirmed'
-                      ? 'Retry verification'
-                      : 'Save photo'
-              }
-              disabled={busy}
-              onPress={onSave}
-            />
-          )}
-          {!saved && !(state === 'deleted' && photo?.deleteConfirmed) && (
-            <Disclosure
-              label={!photo ? 'Choose a photo' : 'Choose another photo'}
-              open={sources}
-              testID="new-photo"
-              disabled={busy}
-              onPress={() => setSources(!sources)}
-            />
-          )}
-          {photoSources}
-        </View>
-        <View style={s.utilities}>
-          <Disclosure
-            label="Test scenario"
-            value={scenario?.label}
-            testID="toggle-failures"
-            open={testing}
-            disabled={busy}
-            onPress={() => setTesting(!testing)}
-          />
-          {testing && (
-            <View style={s.reveal}>
-              <Text style={s.copy}>Inject one failure into the next save.</Text>
-              {SCENARIOS.map((item) => (
-                <FocusPressable
-                  key={item.id}
-                  accessibilityRole={Platform.OS === 'web' ? 'radio' : 'button'}
-                  accessibilityLabel={item.label}
-                  accessibilityState={{
-                    checked: runtime.faults.scenario === item.id,
-                    selected: runtime.faults.scenario === item.id,
-                    disabled: busy,
-                  }}
-                  testID={`scenario-${item.id}`}
-                  disabled={busy}
-                  onPress={() => {
-                    runtime.faults.select(item.id);
-                    setTesting(false);
-                  }}
-                  style={({ pressed }) => [s.choice, pressed && { backgroundColor: c.greenWash }]}
-                >
-                  <Text style={s.choiceText}>{item.label}</Text>
-                  <Text accessible={false} style={s.choiceMark}>
-                    {runtime.faults.scenario === item.id ? '●' : '○'}
+      <View
+        style={s.root}
+        accessibilityElementsHidden={!!sheet}
+        importantForAccessibility={sheet ? 'no-hide-descendants' : 'auto'}
+        aria-hidden={!!sheet}
+      >
+        <FlatList
+          ref={list}
+          data={others}
+          keyExtractor={(p) => p.id}
+          style={s.list}
+          contentContainerStyle={s.page}
+          ListFooterComponentStyle={s.listFooter}
+          renderItem={({ item }) => <View style={s.recentRow}>{row(item, false)}</View>}
+          ListHeaderComponent={
+            <>
+              <View style={s.header}>
+                <View style={[s.headingRow, fontScale >= 1.4 && { flexWrap: 'wrap' }]}>
+                  <Text accessibilityRole="header" maxFontSizeMultiplier={1.6} style={s.title}>
+                    Outbox
                   </Text>
-                </FocusPressable>
-              ))}
-            </View>
-          )}
-          {photos.length > 1 && (
-            <Disclosure
-              label={`Photos (${photos.length})`}
-              testID="toggle-photos"
-              open={allPhotos}
-              disabled={busy}
-              onPress={() => setAllPhotos(!allPhotos)}
-            />
-          )}
-          {allPhotos && (
-            <View style={s.reveal}>
-              {photos.map((p, index) => (
-                <FocusPressable
-                  key={p.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Photo ${photos.length - index}, ${stateLabel(p)}`}
-                  accessibilityState={{ selected: p.id === photo?.id, disabled: busy }}
-                  testID={`capture-${p.id}`}
-                  disabled={busy}
-                  onPress={() => {
-                    onSelect(p.id);
-                    setAllPhotos(false);
-                  }}
-                  style={s.choice}
-                >
-                  <Text style={s.choiceText}>Photo {photos.length - index}</Text>
-                  <Text style={s.copy}>
-                    {stateLabel(p)}
-                    {p.id === photo?.id ? ' ✓' : ''}
-                  </Text>
-                </FocusPressable>
-              ))}
-            </View>
-          )}
-          <Disclosure
-            label="Details"
-            testID="toggle-details"
-            open={details}
-            onPress={() => setDetails(!details)}
-          />
-          {details && (
-            <View style={s.reveal}>
-              {(!photo || state === 'deleted') && <AccountTotals counts={counts} />}
-              <View style={s.account}>
-                <Text testID="account-label" style={s.copy}>
-                  {ownerLabel}
+                  <TextButton
+                    label="Add photo"
+                    testID="new-photo"
+                    icon="add"
+                    disabled={busy}
+                    onPress={() => setSheet('sources')}
+                  />
+                </View>
+                <Text style={s.mode}>
+                  {runtime.mode === 'demo' ? 'Demo · simulated cloud' : 'Supabase'}
                 </Text>
-                <Button
-                  testID="switch-account"
-                  label={runtime.mode === 'demo' ? 'Switch account' : 'New test account'}
-                  onPress={onSwitch}
-                />
               </View>
-              {photo && (
-                <Text style={s.small}>
-                  {photo.id} · {Math.ceil(photo.byteLength / 1024)} KB · JPEG
-                </Text>
-              )}
-              <Text style={s.small}>
-                <Text testID="deleted-count">{counts.deleted}</Text> deletion{' '}
-                {counts.deleted === 1 ? 'record' : 'records'}
-              </Text>
-              {runtime.faults.offline && (
-                <Text testID="network-status" style={s.error}>
-                  Injected interruption. Retry resumes requests.
-                </Text>
-              )}
-              {[...latest.values()].map((t) => (
-                <View key={t.stage} style={s.traceRow}>
-                  <Text
+              {!photo ? (
+                <View style={s.empty}>
+                  <Text testID="no-capture" style={s.emptyTitle}>
+                    No photos yet
+                  </Text>
+                  <Text style={s.copy}>Choose a photo to start a save.</Text>
+                  <TextButton
+                    label={busy ? 'Preparing photo…' : 'Try recovery demo'}
+                    compact
+                    testID="start-demo"
+                    disabled={busy}
+                    onPress={() => {
+                      runtime.faults.select(
+                        runtime.faults.scenario === 'normal'
+                          ? 'upload-response-lost'
+                          : runtime.faults.scenario,
+                      );
+                      capture('sample');
+                    }}
+                  />
+                </View>
+              ) : (
+                <View style={s.primaryGroup}>
+                  <Text accessibilityRole="header" style={[s.sectionTitle, { marginBottom: 6 }]}>
+                    {groupTitle}
+                  </Text>
+                  {row(photo, true)}
+                  <View
                     style={[
-                      s.traceMark,
-                      { color: t.outcome === 'unconfirmed' ? c.warning : c.green },
+                      s.rowFooter,
+                      stacked && { flexDirection: 'column', alignItems: 'flex-start' },
                     ]}
                   >
-                    {t.outcome === 'ok' ? '✓' : t.outcome === 'unconfirmed' ? '!' : '·'}
-                  </Text>
-                  <Text style={s.copy}>{t.stage}</Text>
+                    <Text style={[s.rowHelp, stacked && { flex: 0, alignSelf: 'stretch' }]}>
+                      {help}
+                    </Text>
+                    <TextButton
+                      label="Details"
+                      compact
+                      testID="toggle-details"
+                      onPress={() => setSheet('details')}
+                    />
+                  </View>
                 </View>
-              ))}
-              {saved && (
-                <Button
-                  testID="save-photo"
-                  label={busy ? 'Checking this capture…' : 'Verify again'}
-                  disabled={busy}
-                  onPress={onSave}
-                />
               )}
-              {photo && state !== 'deleted' && (
-                <View style={s.removal}>
-                  <Button
-                    testID="remove-photo"
-                    label="Remove photo"
-                    danger
-                    disabled={busy}
-                    onPress={onRemove}
-                  />
+              {!!message && !message.startsWith('Cloud save is unconfirmed') && (
+                <Text testID="operation-message" accessibilityLiveRegion="polite" style={s.error}>
+                  {message}
+                </Text>
+              )}
+              {others.length > 0 && (
+                <Text accessibilityRole="header" style={[s.sectionTitle, s.recentTitle]}>
+                  Recent captures
+                </Text>
+              )}
+            </>
+          }
+          ListFooterComponent={
+            <View style={s.footerContent}>
+              {photos.length > 0 && (
+                <Text style={s.listHint}>Tap a photo to view its preview and save details.</Text>
+              )}
+              <View style={s.testFooter}>
+                <FocusPressable
+                  testID="toggle-failures"
+                  accessibilityRole="button"
+                  accessibilityLabel={`Test controls: ${scenario?.label}`}
+                  accessibilityState={{ disabled: busy }}
+                  disabled={busy}
+                  onPress={() => setSheet('tests')}
+                  style={({ pressed }) => [
+                    s.testControl,
+                    pressed && s.pressed,
+                    busy && { opacity: 0.5 },
+                  ]}
+                >
+                  <Icon name="settings-outline" size={28} color={c.section} />
+                  <View style={s.testCopy}>
+                    <Text style={s.photoTitle}>Test controls</Text>
+                    <Text testID="scenario-hint" style={s.metadata}>
+                      {scenario?.label}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-forward" size={21} color="#9999a1" />
+                </FocusPressable>
+              </View>
+            </View>
+          }
+        />
+      </View>
+      <Modal
+        visible={!!sheet}
+        transparent
+        animationType={Platform.OS === 'web' ? 'none' : 'slide'}
+        onRequestClose={() => setSheet(undefined)}
+      >
+        <View style={s.modalRoot}>
+          <Pressable
+            accessible={false}
+            focusable={false}
+            tabIndex={-1}
+            aria-hidden
+            onPress={() => setSheet(undefined)}
+            style={s.backdrop}
+          />
+          <SafeAreaView edges={['bottom']} style={s.sheet} accessibilityViewIsModal>
+            <View style={s.sheetHeader}>
+              <Text accessibilityRole="header" maxFontSizeMultiplier={1.6} style={s.sheetTitle}>
+                {sheet === 'sources'
+                  ? 'Add photo'
+                  : sheet === 'tests'
+                    ? 'Test controls'
+                    : photo
+                      ? titleOf(photo)
+                      : 'Details'}
+              </Text>
+              <TextButton label="Done" testID="close-panel" onPress={() => setSheet(undefined)} />
+            </View>
+            <ScrollView contentContainerStyle={s.sheetContent}>
+              {sheet === 'sources' && (
+                <>
+                  <Text style={s.copy}>
+                    Choose a photo. Its JPEG is kept locally before the cloud save.
+                  </Text>
+                  {(
+                    [
+                      ['library', 'Photo library', 'images-outline'],
+                      ['camera', 'Camera', 'camera-outline'],
+                      ['sample', 'Use sample photo', 'image-outline'],
+                    ] as const
+                  ).map(([source, label, icon]) => (
+                    <FocusPressable
+                      key={source}
+                      testID={source === 'sample' ? 'sample-photo' : `${source}-photo`}
+                      accessibilityRole="button"
+                      accessibilityLabel={label}
+                      disabled={busy}
+                      onPress={() => capture(source)}
+                      style={s.sheetChoice}
+                    >
+                      <Icon name={icon} color={c.blue} />
+                      <Text style={s.choiceText}>{label}</Text>
+                      <Icon name="chevron-forward" size={18} />
+                    </FocusPressable>
+                  ))}
+                  <Text style={s.small}>The coastline sample is AI generated.</Text>
+                </>
+              )}
+              {sheet === 'tests' && (
+                <>
+                  <Text style={s.copy}>Inject one failure into the next save.</Text>
+                  {SCENARIOS.map((item) => (
+                    <FocusPressable
+                      key={item.id}
+                      testID={`scenario-${item.id}`}
+                      accessibilityRole={Platform.OS === 'web' ? 'radio' : 'button'}
+                      accessibilityLabel={item.label}
+                      aria-checked={
+                        Platform.OS === 'web' ? runtime.faults.scenario === item.id : undefined
+                      }
+                      accessibilityState={{
+                        checked: runtime.faults.scenario === item.id,
+                        selected: runtime.faults.scenario === item.id,
+                        disabled: busy,
+                      }}
+                      disabled={busy}
+                      onPress={() => {
+                        runtime.faults.select(item.id);
+                        setSheet(undefined);
+                      }}
+                      style={s.sheetChoice}
+                    >
+                      <Text style={s.choiceText}>{item.label}</Text>
+                      <Icon
+                        name={
+                          runtime.faults.scenario === item.id
+                            ? 'checkmark-circle'
+                            : 'ellipse-outline'
+                        }
+                        color={runtime.faults.scenario === item.id ? c.blue : c.muted}
+                      />
+                    </FocusPressable>
+                  ))}
+                  <AccountTotals counts={counts} />
+                  <View style={s.inspectorBlock}>
+                    <Text testID="account-label" style={s.inspectorLabel}>
+                      {ownerLabel}
+                    </Text>
+                    <TextButton
+                      label={runtime.mode === 'demo' ? 'Switch account' : 'New test account'}
+                      testID="switch-account"
+                      onPress={onSwitch}
+                    />
+                    <Text style={s.small}>
+                      {runtime.mode === 'demo'
+                        ? 'Each demo account has a separate outbox.'
+                        : 'A new anonymous account cannot reopen the previous account’s photos.'}
+                    </Text>
+                  </View>
+                  <Text style={s.small}>Expo + Supabase starter by AutonoMax Innovations.</Text>
+                </>
+              )}
+              {sheet === 'details' && photo && (
+                <>
+                  <PhotoImage key={photo.id} photo={photo} expanded onRead={onRead} />
+                  <View style={s.detailHeading}>
+                    <Status photo={photo} working={working} removal={activity === 'remove'} />
+                    <Text style={s.metadata}>{metadata(photo, false)} · JPEG</Text>
+                  </View>
+                  <Text style={s.inspectorLabel}>Capture ID</Text>
+                  <Text selectable testID="capture-id" style={s.captureId}>
+                    {photo.id}
+                  </Text>
+                  {photo.state !== 'deleted' && (
+                    <View testID="save-receipt" style={s.inspectorBlock}>
+                      <Text style={s.inspectorLabel}>This capture</Text>
+                      <ReceiptRow
+                        testID="receipt-device"
+                        label="On device"
+                        value={missing ? 'Unavailable' : localReadable ? 'Kept' : 'Loading…'}
+                        known={localReadable}
+                        working={!missing && !localReadable}
+                      />
+                      <ReceiptRow
+                        testID="receipt-image"
+                        label="Cloud image"
+                        value={
+                          photo.state === 'confirmed' && photo.lastError
+                            ? 'Recheck needed'
+                            : imageWorking
+                              ? 'Checking…'
+                              : imageKnown
+                                ? 'Verified'
+                                : photo.state === 'pending'
+                                  ? 'Unconfirmed'
+                                  : 'Not sent'
+                        }
+                        known={imageKnown && !(photo.state === 'confirmed' && photo.lastError)}
+                        working={imageWorking}
+                      />
+                      <ReceiptRow
+                        testID="receipt-record"
+                        label="Save record"
+                        value={
+                          photo.state === 'confirmed' && photo.lastError
+                            ? 'Recheck needed'
+                            : recordWorking
+                              ? 'Checking…'
+                              : recordKnown
+                                ? 'Verified'
+                                : photo.state === 'pending'
+                                  ? 'Unconfirmed'
+                                  : 'Not saved'
+                        }
+                        known={recordKnown && !(photo.state === 'confirmed' && photo.lastError)}
+                        working={recordWorking}
+                      />
+                    </View>
+                  )}
+                  {missing && (
+                    <Text style={s.error}>
+                      The original JPEG is unavailable. Save checks the cloud; no replacement photo
+                      is uploaded.
+                    </Text>
+                  )}
+                  {!!photo.lastError && localReadable && (
+                    <Text style={s.small}>{photo.lastError}</Text>
+                  )}
+                  {runtime.faults.offline && (
+                    <Text testID="network-status" style={s.small}>
+                      Injected interruption. Retry resumes requests.
+                    </Text>
+                  )}
+                  {[...latest.values()].map((t) => (
+                    <View key={t.stage} style={s.traceRow}>
+                      <Icon
+                        name={
+                          t.outcome === 'ok'
+                            ? 'checkmark'
+                            : t.outcome === 'unconfirmed'
+                              ? 'alert-circle-outline'
+                              : 'time-outline'
+                        }
+                        size={17}
+                        color={t.outcome === 'unconfirmed' ? c.warning : c.muted}
+                      />
+                      <Text style={s.small}>{t.stage}</Text>
+                    </View>
+                  ))}
+                  <View style={s.detailActions}>
+                    {saved ? (
+                      <TextButton
+                        label={working ? 'Checking…' : 'Verify again'}
+                        testID="details-save-photo"
+                        disabled={busy}
+                        onPress={() => onSave(photo.id)}
+                      />
+                    ) : (
+                      saveAction(photo, true)
+                    )}
+                    {photo.state !== 'deleted' && (
+                      <TextButton
+                        label="Remove photo"
+                        testID="details-remove-photo"
+                        danger
+                        disabled={busy}
+                        onPress={() => onRemove(photo.id)}
+                      />
+                    )}
+                  </View>
                   <Text style={s.small}>
                     Soft removal. Local and cloud image files are retained.
                   </Text>
-                </View>
+                  <AccountTotals counts={counts} />
+                  <View style={s.inspectorBlock}>
+                    <Text testID="account-label" style={s.inspectorLabel}>
+                      {ownerLabel}
+                    </Text>
+                    <TextButton
+                      label={runtime.mode === 'demo' ? 'Switch account' : 'New test account'}
+                      testID="switch-account"
+                      onPress={onSwitch}
+                    />
+                  </View>
+                </>
               )}
-            </View>
-          )}
+            </ScrollView>
+          </SafeAreaView>
         </View>
-        <Text style={s.footer}>An Expo starter by AutonoMax Innovations</Text>
-      </ScrollView>
+      </Modal>
     </SafeAreaView>
   );
 }
+
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: c.paper },
+  root: { flex: 1, backgroundColor: c.white },
+  loading: { alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
+  list: { flex: 1 },
   page: {
+    flexGrow: 1,
     width: '100%',
     maxWidth: 460,
     alignSelf: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 28,
+    paddingHorizontal: 18,
+    paddingTop: Platform.OS === 'web' ? 36 : 16,
+    paddingBottom: 30,
   },
-  loading: { alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24 },
-  loadingTitle: { color: c.ink, fontSize: 22, fontWeight: '600' },
-  header: { marginBottom: 28, gap: 5 },
-  brand: { fontSize: 18, lineHeight: 24, fontWeight: '600', letterSpacing: -0.5, color: c.ink },
-  mode: { fontSize: 12, lineHeight: 18, color: c.muted },
-  story: { gap: 9, marginBottom: 20 },
-  eyebrow: {
-    fontSize: 11,
-    lineHeight: 17,
-    fontWeight: '700',
-    letterSpacing: 1.25,
-    textTransform: 'uppercase',
-  },
-  title: { fontSize: 34, lineHeight: 39, fontWeight: '700', letterSpacing: -1.1, color: c.ink },
-  help: { fontSize: 14, lineHeight: 21, color: c.muted, maxWidth: 365 },
-  preview: {
-    width: '100%',
-    aspectRatio: 1.9,
-    backgroundColor: c.greenWash,
-    borderRadius: 14,
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  image: { width: '100%', height: '100%' },
-  sampleCaption: {
-    position: 'absolute',
-    left: 12,
-    bottom: 12,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 5,
-    backgroundColor: '#ffffffee',
-  },
-  sampleCaptionText: { color: c.ink, fontSize: 11, lineHeight: 16 },
-  empty: { alignItems: 'center', gap: 9, padding: 20 },
-  emptyTitle: { fontSize: 18, lineHeight: 24, fontWeight: '600', color: c.ink },
-  receipt: {
-    backgroundColor: c.white,
-    borderWidth: 1,
-    borderColor: c.line,
-    borderRadius: 14,
-    paddingHorizontal: 15,
-    paddingTop: 13,
-    paddingBottom: 12,
-    marginTop: 16,
-  },
-  receiptHeading: {
+  header: { marginBottom: 28 },
+  headingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 10,
+  },
+  title: { fontSize: 34, lineHeight: 42, fontWeight: '700', letterSpacing: -1.1, color: c.ink },
+  mode: { fontSize: 14, lineHeight: 20, color: c.muted, marginTop: 3 },
+  textButton: {
+    minHeight: 44,
+    paddingHorizontal: 0,
+    paddingVertical: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  actionText: { fontSize: 16, lineHeight: 22, fontWeight: '400' },
+  compactAction: { fontSize: 14, lineHeight: 20 },
+  pressed: { opacity: 0.65 },
+  sectionTitle: { fontSize: 16, lineHeight: 24, fontWeight: '600', color: c.section },
+  primaryGroup: { gap: 0 },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  stackedRow: { flexDirection: 'column', alignItems: 'stretch' },
+  rowOpen: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 15,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 5,
+    minHeight: 76,
+    paddingVertical: 4,
+  },
+  rowCopy: { flex: 1, gap: 2 },
+  thumbnail: {
+    width: 64,
+    height: 66,
+    borderRadius: 7,
+    overflow: 'hidden',
+    backgroundColor: c.fill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  image: { width: '100%', height: '100%' },
+  photoTitle: { fontSize: 16, lineHeight: 22, fontWeight: '400', color: c.ink },
+  metadata: { fontSize: 13, lineHeight: 19, color: c.muted },
+  statusLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  status: { fontSize: 14, lineHeight: 20, color: c.muted, flexShrink: 1 },
+  saveTarget: {
+    minHeight: 44,
+    minWidth: 78,
+    paddingVertical: 4,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 9,
+    alignSelf: 'center',
+    justifyContent: 'center',
+  },
+  saveButton: {
+    borderRadius: 7,
+    minHeight: 35,
+    minWidth: 74,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#252527',
+  },
+  saveText: { fontSize: 14, lineHeight: 20, fontWeight: '600', color: c.white },
+  rowFooter: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: c.line,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingTop: 3,
+  },
+  rowHelp: { flex: 1, fontSize: 13, lineHeight: 20, color: c.muted },
+  recentTitle: { marginTop: 16, marginBottom: 6 },
+  recentRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.line,
+    paddingVertical: 3,
+  },
+  listFooter: { flexGrow: 1 },
+  footerContent: { flex: 1 },
+  listHint: { fontSize: 13, lineHeight: 20, color: c.muted, marginTop: 18 },
+  testFooter: { marginTop: 'auto', paddingTop: 30 },
+  testControl: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: c.line,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 15,
+    paddingTop: 16,
+    paddingBottom: 4,
+    minHeight: 68,
+  },
+  testCopy: { flex: 1, gap: 2 },
+  empty: { alignItems: 'flex-start', gap: 5 },
+  emptyTitle: { fontSize: 16, lineHeight: 24, fontWeight: '600', color: c.ink },
+  copy: { fontSize: 14, lineHeight: 21, color: c.muted },
+  small: { fontSize: 12, lineHeight: 19, color: c.muted },
+  error: { fontSize: 13, lineHeight: 20, color: c.warning, marginTop: 10 },
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    backgroundColor: '#00000030',
+  },
+  backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  sheet: {
+    width: '100%',
+    maxWidth: 460,
+    maxHeight: '90%',
+    backgroundColor: c.white,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.line,
+  },
+  sheetTitle: { flex: 1, fontSize: 18, lineHeight: 26, fontWeight: '600', color: c.ink },
+  sheetContent: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28, gap: 12 },
+  sheetChoice: {
+    minHeight: 52,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.line,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  choiceText: { flex: 1, fontSize: 15, lineHeight: 22, color: c.ink },
+  expandedImage: {
+    height: 190,
+    width: '100%',
+    backgroundColor: c.fill,
+    borderRadius: 8,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageUnavailable: { alignItems: 'center', justifyContent: 'center', gap: 10 },
+  detailHeading: { gap: 6 },
+  inspectorBlock: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: c.line,
+    paddingTop: 16,
     gap: 8,
-    marginBottom: 13,
-    flexWrap: 'wrap',
   },
-  receiptTitle: {
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-    color: c.muted,
-  },
+  inspectorLabel: { fontSize: 13, lineHeight: 20, fontWeight: '600', color: c.section },
   captureId: {
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 12,
+    lineHeight: 19,
     color: c.muted,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
-  receiptSteps: { flexDirection: 'row', gap: 8 },
-  receiptStepsLarge: { flexDirection: 'column', gap: 18 },
-  receiptStep: { flex: 1, alignItems: 'flex-start', gap: 4 },
-  receiptStepLarge: { flex: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  stepCopy: { gap: 4, flexShrink: 1, alignSelf: 'stretch' },
-  stepMark: {
-    width: 29,
-    height: 29,
-    borderRadius: 15,
-    backgroundColor: '#f0f3ef',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 3,
-  },
-  stepDone: { backgroundColor: c.greenWash },
-  stepUncertain: { backgroundColor: c.warningWash },
-  stepNumber: { fontSize: 10, fontWeight: '700' },
-  stepLabel: { fontSize: 12, lineHeight: 17, fontWeight: '600', color: c.ink },
-  stepValue: { fontSize: 12, lineHeight: 18 },
-  totals: {
-    borderTopWidth: 1,
-    borderTopColor: c.line,
-    marginTop: 13,
-    paddingTop: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
-    flexWrap: 'wrap',
-  },
-  totalsValue: { fontSize: 12, lineHeight: 18, fontWeight: '500', color: c.ink },
-  mainAction: { marginTop: 18 },
-  button: {
-    minHeight: 48,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  primary: { minHeight: 54, backgroundColor: c.green },
-  buttonText: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
-    color: c.ink,
-    textAlign: 'center',
-  },
-  sources: { paddingTop: 6, paddingBottom: 10, backgroundColor: c.greenWash, borderRadius: 11 },
-  sourceRow: { flexDirection: 'row', justifyContent: 'center', gap: 12, flexWrap: 'wrap' },
-  utilities: { marginTop: 8 },
-  disclosure: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 2,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  disclosureLabel: { flex: 1, gap: 2 },
-  disclosureText: { fontSize: 13, lineHeight: 20, fontWeight: '500', color: c.ink },
-  chevron: { fontSize: 19, lineHeight: 23, color: c.muted },
-  reveal: { paddingBottom: 12, paddingHorizontal: 2, gap: 8 },
-  choice: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 7,
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  choiceText: { flex: 1, fontSize: 14, lineHeight: 21, color: c.ink },
-  choiceMark: { fontSize: 17, color: c.green },
-  account: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    flexWrap: 'wrap',
-  },
-  copy: { fontSize: 14, lineHeight: 21, color: c.muted },
-  small: { fontSize: 12, lineHeight: 18, color: c.muted },
-  error: { fontSize: 13, lineHeight: 20, color: c.warning, marginTop: 12 },
+  receiptRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 3 },
+  receiptCopy: { flex: 1, gap: 1 },
   traceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  traceMark: { width: 14, fontSize: 15 },
-  removal: { marginTop: 10, alignItems: 'flex-start', gap: 4 },
-  footer: { fontSize: 11, lineHeight: 17, color: c.muted, marginTop: 22, textAlign: 'center' },
+  detailActions: {
+    flexDirection: 'row',
+    gap: 18,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
 });
