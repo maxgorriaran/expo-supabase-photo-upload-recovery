@@ -1,5 +1,5 @@
 {
-  "name": "expo-supabase-photo-recovery",
+  "name": "expo-supabase-photo-upload-recovery",
   "version": "0.1.0",
   "private": true,
   "type": "module",

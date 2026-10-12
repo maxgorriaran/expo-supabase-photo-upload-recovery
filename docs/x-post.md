@@ -8,7 +8,7 @@ Publish after the app's visual review and the public GitHub URL exists. Attach `
 >
 > Demo: lost response → restart → retry → one image, one record.
 >
-> https://github.com/maxgorriaran/expo-supabase-photo-recovery
+> https://github.com/maxgorriaran/expo-supabase-photo-upload-recovery
 
 First reply:
 

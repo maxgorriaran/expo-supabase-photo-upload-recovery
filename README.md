@@ -1,6 +1,6 @@
-# Expo + Supabase Photo Recovery
+# Expo + Supabase Photo Upload Recovery
 
-[![Checks](https://github.com/maxgorriaran/expo-supabase-photo-recovery/actions/workflows/ci.yml/badge.svg)](https://github.com/maxgorriaran/expo-supabase-photo-recovery/actions/workflows/ci.yml)
+[![Checks](https://github.com/maxgorriaran/expo-supabase-photo-upload-recovery/actions/workflows/ci.yml/badge.svg)](https://github.com/maxgorriaran/expo-supabase-photo-upload-recovery/actions/workflows/ci.yml)
 
 **Your upload succeeded. Your app thinks it failed. What happens when you tap Retry?**
 

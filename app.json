@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Photo Recovery",
-    "slug": "expo-supabase-photo-recovery",
+    "name": "Outbox",
+    "slug": "expo-supabase-photo-upload-recovery",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "name": "Photo Recovery"
+      "name": "Outbox"
     },
     "plugins": [
       [
