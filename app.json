@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Photo Recovery",
+    "slug": "expo-supabase-photo-recovery",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.autonomax.photorecovery"
+    },
+    "android": {
+      "package": "com.autonomax.photorecovery"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "Photo Recovery"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a photo to test saving and recovery.",
+          "cameraPermission": "Take a photo to test saving and recovery.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-asset"
+    ]
+  }
+}

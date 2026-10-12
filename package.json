@@ -1,0 +1,51 @@
+{
+  "name": "expo-supabase-photo-recovery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A runnable Expo and Supabase example of photo saves that survive partial success and lost responses.",
+  "license": "MIT",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:core": "tsx --test tests/recovery.test.ts",
+    "test:sql": "tsx --test tests/schema.test.ts",
+    "test:supabase": "tsx scripts/test-supabase.ts",
+    "test:web": "node scripts/test-web.mjs",
+    "demo": "node scripts/test-web.mjs --record",
+    "preview": "node scripts/serve.mjs",
+    "format": "prettier --write App.tsx index.ts src tests scripts '*.json' '*.md' docs/*.md .github",
+    "format:check": "prettier --check App.tsx index.ts src tests scripts '*.json' '*.md' docs/*.md .github",
+    "export:web": "expo export --platform web",
+    "check": "npm run typecheck && npm test && git diff --check"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@supabase/supabase-js": "2.117.3",
+    "expo": "57.0.27",
+    "expo-asset": "~57.0.19",
+    "expo-crypto": "~57.0.3",
+    "expo-file-system": "~57.0.7",
+    "expo-image-manipulator": "~57.0.21",
+    "expo-image-picker": "~57.0.20",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@types/node": "26.6.5",
+    "@types/react": "19.2.4",
+    "playwright": "1.64.0",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3"
+  }
+}
